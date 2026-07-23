@@ -4,8 +4,8 @@
     <title>Track Order #{{ $order->id }}</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl/dist/maplibre-gl.css" />
-    <script src="https://unpkg.com/maplibre-gl/dist/maplibre-gl.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@3.6.2/dist/maplibre-gl.css" />
+    <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -258,38 +258,51 @@
         let currentRouteCoords = null;
         let watchId = null;
 
-        // Set shareable link input value
-        document.getElementById('share-link-input').value = window.location.href;
+        document.addEventListener('DOMContentLoaded', function () {
+            // Set shareable link input value
+            const shareInput = document.getElementById('share-link-input');
+            if (shareInput) {
+                shareInput.value = window.location.href;
+            }
 
-        // Copy link event listener
-        document.getElementById('btn-copy-link').addEventListener('click', function () {
-            const input = document.getElementById('share-link-input');
-            input.select();
-            input.setSelectionRange(0, 99999);
-            navigator.clipboard.writeText(input.value);
-            
-            const btn = this;
-            const originalHTML = btn.innerHTML;
-            btn.innerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="green" viewBox="0 0 16 16">
-                  <path d="M12.736 3.97a.733.733 0 0 1 1.047 0c.286.289.29.756.01 1.05L7.88 12.01a.733.733 0 0 1-1.065.02L3.217 8.384a.757.757 0 0 1 0-1.06.733.733 0 0 1 1.047 0l3.052 3.093 5.4-6.425z"/>
-                </svg>
-            `;
-            setTimeout(() => {
-                btn.innerHTML = originalHTML;
-            }, 2000);
-        });
+            // Copy link event listener
+            const copyBtn = document.getElementById('btn-copy-link');
+            if (copyBtn) {
+                copyBtn.addEventListener('click', function () {
+                    const input = document.getElementById('share-link-input');
+                    input.select();
+                    input.setSelectionRange(0, 99999);
+                    navigator.clipboard.writeText(input.value);
+                    
+                    const btn = this;
+                    const originalHTML = btn.innerHTML;
+                    btn.innerHTML = `
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="green" viewBox="0 0 16 16">
+                          <path d="M12.736 3.97a.733.733 0 0 1 1.047 0c.286.289.29.756.01 1.05L7.88 12.01a.733.733 0 0 1-1.065.02L3.217 8.384a.757.757 0 0 1 0-1.06.733.733 0 0 1 1.047 0l3.052 3.093 5.4-6.425z"/>
+                        </svg>
+                    `;
+                    setTimeout(() => {
+                        btn.innerHTML = originalHTML;
+                    }, 2000);
+                });
+            }
 
-        // Initialize Goong Map
-        const mapCenter = shipperCoords ? shipperCoords : deliveryCoords;
-        map = new maplibregl.Map({
-            container: 'map',
-            style: `${mapUrl}goong_map_web.json?api_key=${mapKey}`,
-            center: mapCenter,
-            zoom: zoom
-        });
+            if (typeof maplibregl === 'undefined') {
+                console.error('MapLibre GL library failed to load.');
+                alert('Không thể tải thư viện bản đồ MapLibre GL. Vui lòng làm mới trang.');
+                return;
+            }
 
-        map.on('load', function () {
+            // Initialize Goong Map
+            const mapCenter = shipperCoords ? shipperCoords : deliveryCoords;
+            map = new maplibregl.Map({
+                container: 'map',
+                style: `${mapUrl}goong_map_web.json?api_key=${mapKey}`,
+                center: mapCenter,
+                zoom: zoom
+            });
+
+            map.on('load', function () {
             // Add Customer/End Marker
             const customerEl = document.createElement('div');
             customerEl.className = 'custom-marker';
@@ -312,11 +325,11 @@
                 map.flyTo({ center: deliveryCoords, zoom: zoom });
             }
 
-            // Differentiate watcher vs poller
+            // Differentiate watcher vs poller/realtime listener
             if (isShipper) {
                 startWatchingLocation();
             } else {
-                startPollingLocation();
+                startRealtimeListener();
             }
         });
 
@@ -513,50 +526,75 @@
             });
         }
 
-        // ================= CUSTOMER / GUEST FLOW (POLLING) =================
+        // ================= CUSTOMER / GUEST FLOW (REALTIME REVERB ECHO + POLLING FALLBACK) =================
+        function startRealtimeListener() {
+            if (typeof window.Echo !== 'undefined') {
+                console.log('Listening for realtime location updates on channel: order.' + orderId);
+                window.Echo.channel(`order.${orderId}`)
+                    .listen('.ShipperLocationUpdated', function (data) {
+                        console.log('Realtime location update received:', data);
+                        updateMapWithOrderData(data);
+                    })
+                    .listen('ShipperLocationUpdated', function (data) {
+                        console.log('Realtime location update received:', data);
+                        updateMapWithOrderData(data);
+                    });
+            } else {
+                console.warn('Laravel Echo is not available. Falling back to HTTP polling.');
+                startPollingLocation();
+            }
+        }
+
+        function updateMapWithOrderData(orderData) {
+            // Update status badge
+            const statusBadge = document.getElementById('order-status-badge');
+            if (statusBadge && orderData.status) {
+                let statusText = orderData.status;
+                if (orderData.status === 'waiting') statusText = 'Waiting';
+                else if (orderData.status === 'accepted') statusText = 'Accepted';
+                else if (orderData.status === 'delivering') statusText = 'Delivering';
+                else if (orderData.status === 'completed') statusText = 'Completed';
+                statusBadge.textContent = statusText;
+            }
+
+            // Update shipper location
+            const newLat = parseFloat(orderData.shipper_lat);
+            const newLng = parseFloat(orderData.shipper_lng);
+
+            if (newLat && newLng && (shipperLat !== newLat || shipperLng !== newLng)) {
+                shipperLat = newLat;
+                shipperLng = newLng;
+                shipperCoords = [newLng, newLat];
+
+                if (shipperMarker) {
+                    shipperMarker.setLngLat(shipperCoords);
+                } else {
+                    const shipperEl = document.createElement('div');
+                    shipperEl.className = 'shipper-marker';
+                    shipperMarker = new maplibregl.Marker({ element: shipperEl })
+                        .setLngLat(shipperCoords)
+                        .addTo(map);
+                }
+
+                // Redraw route dynamically
+                fetchDirections(`${newLat},${newLng}`, `${deliveryLat},${deliveryLng}`, false);
+            }
+        }
+
         function startPollingLocation() {
             setInterval(function () {
                 const apiGetDataUrl = `/api/orders/${orderId}`;
                 fetch(apiGetDataUrl)
                     .then(res => res.json())
                     .then(orderData => {
-                        // Update status badge
-                        const statusBadge = document.getElementById('order-status-badge');
-                        let statusText = orderData.status;
-                        if (orderData.status === 'waiting') statusText = 'Waiting';
-                        else if (orderData.status === 'accepted') statusText = 'Accepted';
-                        else if (orderData.status === 'delivering') statusText = 'Delivering';
-                        else if (orderData.status === 'completed') statusText = 'Completed';
-                        statusBadge.textContent = statusText;
-
-                        // Update shipper location
-                        const newLat = orderData.shipper_lat;
-                        const newLng = orderData.shipper_lng;
-
-                        if (newLat && newLng && (shipperLat !== newLat || shipperLng !== newLng)) {
-                            shipperLat = newLat;
-                            shipperLng = newLng;
-                            shipperCoords = [newLng, newLat];
-
-                            if (shipperMarker) {
-                                shipperMarker.setLngLat(shipperCoords);
-                            } else {
-                                const shipperEl = document.createElement('div');
-                                shipperEl.className = 'shipper-marker';
-                                shipperMarker = new maplibregl.Marker({ element: shipperEl })
-                                    .setLngLat(shipperCoords)
-                                    .addTo(map);
-                            }
-
-                            // Redraw route dynamically
-                            fetchDirections(`${newLat},${newLng}`, `${deliveryLat},${deliveryLng}`, false);
-                        }
+                        updateMapWithOrderData(orderData);
                     })
                     .catch(err => {
                         console.error('Failed to poll shipper location:', err);
                     });
             }, 5000);
         }
+        });
     </script>
 </body>
 </html>

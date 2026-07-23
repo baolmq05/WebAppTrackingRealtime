@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 
 use App\Models\Order;
+use App\Events\ShipperLocationUpdated;
 use Illuminate\Support\Facades\Auth;
 
 class OrderController extends Controller
@@ -95,6 +96,8 @@ class OrderController extends Controller
             'shipper_lat' => $request->shipper_lat,
             'shipper_lng' => $request->shipper_lng,
         ]);
+
+        broadcast(new ShipperLocationUpdated($order));
 
         return response()->json(['success' => true]);
     }
